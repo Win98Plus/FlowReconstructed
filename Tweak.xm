@@ -99,6 +99,50 @@
 - (void)msngrButtonTapped:(id)sender;
 @end
 
+static NSString *gCrashLogFilePath = nil;
+static NSMutableString *gCrashLogBuffer = nil;
+
+static NSString *FlowEnsureLogFilePath(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+        [formatter setDateFormat:@"yyyyMMddHHmmss"];
+        NSString *timestamp = [formatter stringFromDate:[NSDate date]];
+        NSString *fileName = [NSString stringWithFormat:@"%@-crash.txt", timestamp];
+        NSString *docsDir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:docsDir withIntermediateDirectories:YES attributes:nil error:nil];
+        gCrashLogFilePath = [docsDir stringByAppendingPathComponent:fileName];
+        gCrashLogBuffer = [[NSMutableString alloc] init];
+    });
+    return gCrashLogFilePath;
+}
+
+static void FlowWriteLog(NSString *message) {
+    if (!message) return;
+    NSString *path = FlowEnsureLogFilePath();
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    [formatter setDateFormat:@"yyyy-MM-dd HH:mm:ss.SSS"];
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [formatter stringFromDate:[NSDate date]], message];
+    @synchronized (gCrashLogBuffer) {
+        [gCrashLogBuffer appendString:line];
+        [gCrashLogBuffer writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+}
+
+static void FlowUncaughtExceptionHandler(NSException *exception) {
+    NSString *report = [NSString stringWithFormat:@"EXCEPTION: %@\nReason: %@\nUserInfo: %@\nStack:\n%@\n",
+                        exception.name,
+                        exception.reason,
+                        exception.userInfo,
+                        [exception.callStackSymbols componentsJoinedByString:@"\n"]];
+    FlowWriteLog(report);
+}
+
+static void FlowInstallCrashHandlers(void) {
+    FlowWriteLog(@"Flow diagnostic logger started");
+    NSSetUncaughtExceptionHandler(&FlowUncaughtExceptionHandler);
+}
+
 static __weak UITabBar *gActiveTabBar = nil;
 
 @interface NSBundle (Msngr)
@@ -215,7 +259,7 @@ static NSDictionary<NSString *, NSString *> *FlowEnglishStrings(void) {
             @"DvntmsDesc": @"All my tweaks in one place",
             @"DonateMe": @"Every donation is deeply appreciated",
             @"StoreDesc": @"Your #1 store for tweaked apps",
-            @"DeveloperFooter": @"Developed with ❤️ by Dan & Nasser"
+            @"DeveloperFooter": @"Developed by Dan & Nasser"
         };
     });
     return dict;
@@ -253,6 +297,7 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 @property (nonatomic, strong) UITableView *tableView;
 - (UIImage *)devCellImage:(NSString *)imgName;
 - (void)toggleSwitch:(UISwitch *)sender;
+- (void)locButtonTapped:(UIBarButtonItem *)sender;
 - (void)updateInterfaceForTraitCollection:(UITraitCollection *)traitCollection;
 @end
 
@@ -305,6 +350,15 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    FlowWriteLog(@"SettingsViewController viewDidLoad");
+
+    UIImage *langIcon = [FlowBundleOrSystemImage(@"non_ar", @"globe")
+                         imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:langIcon
+                                                                              style:UIBarButtonItemStylePlain
+                                                                             target:self
+                                                                             action:@selector(locButtonTapped:)];
 
     self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped];
     self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -453,12 +507,16 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
     NSDictionary *item = _sections[section][row];
     [[MsngrUserDefaults standardUserDefaults] setBool:sender.isOn forKey:item[@"key"]];
     [[MsngrUserDefaults standardUserDefaults] synchronize];
+    FlowWriteLog([NSString stringWithFormat:@"Toggled %@ = %d", item[@"key"], (int)sender.isOn]);
     if (gActiveTabBar) {
         [gActiveTabBar items];
         [gActiveTabBar setNeedsLayout];
         [gActiveTabBar layoutIfNeeded];
         [gActiveTabBar layoutSubviews];
     }
+}
+
+- (void)locButtonTapped:(UIBarButtonItem *)sender {
 }
 
 @end
@@ -668,7 +726,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 %hook MSGThreadListDataSource
 
 - (NSArray *)inboxRows {
-    NSMutableArray *rows = [[%orig mutableCopy] autorelease];
+    NSMutableArray *rows = [%orig mutableCopy];
     NSIndexSet *indexesToRemove = [rows indexesOfObjectsPassingTest:^BOOL(id obj, NSUInteger idx, BOOL *stop) {
         if ([obj isKindOfClass:%c(MSGInboxRowUnit)]) {
             NSString *unitKey = [[(MSGInboxRowUnit *)obj inboxUnit] key];
@@ -888,7 +946,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 %hook UITabBar
 - (NSArray *)items {
     gActiveTabBar = self;
-    NSMutableArray *items = [[%orig mutableCopy] autorelease];
+    NSMutableArray *items = [%orig mutableCopy];
     NSIndexSet *indexesToRemove = [items indexesOfObjectsPassingTest:^BOOL(MDSTabBarItem *item, NSUInteger idx, BOOL *stop) {
         BOOL shouldHide = NO;
         if ([item respondsToSelector:@selector(props)]) {
@@ -915,9 +973,9 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     if (class_getInstanceVariable([self class], "_context") &&
         [[MsngrUserDefaults standardUserDefaults] boolForKey:@"callConfirmation"]) {
         UIView *context = [self valueForKey:@"_context"];
-        if ([context isKindOfClass:[UIView class]]) {
-            UIView *firstSub = [context.subviews firstObject];
-            if (firstSub && [firstSub.superview.description containsString:@"RTCCallButton"]) {
+        if ([context isKindOfClass:[UIView class]] && context.subviews.count > 0) {
+            UIView *firstSub = context.subviews[0];
+            if ([firstSub.superview.description containsString:@"RTCCallButton"]) {
                 BOOL isVoiceCall = [firstSub.accessibilityIdentifier isEqualToString:@"rtc-voice-call-button"];
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil
                                                                                message:nil
@@ -963,6 +1021,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %new
 - (void)msngrButtonTapped:(id)sender {
+    FlowWriteLog(@"Opening SettingsViewController");
     SettingsViewController *vc = [[SettingsViewController alloc] init];
     [self.navigationController pushViewController:vc animated:YES];
 }
@@ -982,6 +1041,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %new
 - (void)msngrButtonTapped:(id)sender {
+    FlowWriteLog(@"Opening SettingsViewController");
     SettingsViewController *vc = [[SettingsViewController alloc] init];
     [self.navigationController pushViewController:vc animated:YES];
 }
@@ -991,6 +1051,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %ctor {
     @autoreleasepool {
+        FlowInstallCrashHandlers();
         NSDictionary *entitlements = [[LSApplicationProxy bundleProxyForCurrentProcess] entitlements];
         BOOL isOfficialSigning = [entitlements[@"application-identifier"] isEqualToString:@"T84QZS65DQ.com.facebook.Messenger"];
         BOOL isOfficialBundleID = [[[NSBundle mainBundle] infoDictionary][@"CFBundleIdentifier"] isEqualToString:@"com.facebook.Messenger"];
