@@ -6,10 +6,10 @@
 #import <objc/runtime.h>
 #import <mach-o/dyld.h>
 #import <dlfcn.h>
+
 #ifndef __LOGOS_H
 #define %c(cls) NSClassFromString(@#cls)
 #endif
-
 
 @interface LSApplicationProxy : NSObject
 + (instancetype)bundleProxyForCurrentProcess;
@@ -99,6 +99,7 @@
 - (void)msngrButtonTapped:(id)sender;
 @end
 
+static __weak UITabBar *gActiveTabBar = nil;
 
 @interface NSBundle (Msngr)
 + (NSBundle *)msngr_defaultBundle;
@@ -117,7 +118,6 @@
         }
 
         NSString *defaultPath = @"/Library/Application Support/Flow.bundle";
-
         typedef NSString *(*jbroot_func_t)(NSString *);
         jbroot_func_t jbroot_fn = (jbroot_func_t)dlsym(RTLD_DEFAULT, "__Z6jbrootP8NSString");
         if (!jbroot_fn) {
@@ -147,7 +147,6 @@
 
 @end
 
-
 @interface MsngrUserDefaults : NSUserDefaults
 + (instancetype)standardUserDefaults;
 - (void)registerDefaults;
@@ -173,29 +172,28 @@
 
 @end
 
-
-static NSDictionary<NSString *, NSString *> *FlowFallbackStrings(void) {
+static NSDictionary<NSString *, NSString *> *FlowEnglishStrings(void) {
     static NSDictionary<NSString *, NSString *> *dict = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         dict = @{
             @"Chats": @"Chats",
-            @"RemoveAds": @"Remove ads",
-            @"RemoveStories": @"Remove stories row",
+            @"RemoveAds": @"Remove Ads",
+            @"RemoveStories": @"Remove Stories",
             @"RemovePYMK": @"Remove People You May Know",
-            @"NoTypingIndicator": @"Disable typing indicator",
-            @"ReadAnonymously": @"Read messages anonymously",
-            @"ReadAnonymouslyDesc": @"Read messages without sending read receipts",
+            @"NoTypingIndicator": @"Disable Typing Indicator",
+            @"ReadAnonymously": @"Read Messages Anonymously",
+            @"ReadAnonymouslyDesc": @"Don't let people know when you've read their messages",
             @"SelectAction": @"Select Action",
             @"SendEmoji": @"Send Emoji",
             @"MarkMessagesAsSeen": @"Mark Messages as Seen",
             @"Stories": @"Stories",
-            @"LoopStories": @"Loop stories",
-            @"StoriesAnonymously": @"View stories anonymously",
-            @"StoriesAnonymouslyDesc": @"View stories without alerting the poster",
+            @"LoopStories": @"Loop Stories",
+            @"StoriesAnonymously": @"View Stories Anonymously",
+            @"StoriesAnonymouslyDesc": @"Don't let people know when you've seen their stories",
             @"MarkStoryAsSeen": @"Mark Story as Seen",
-            @"DownloadStories": @"Download stories",
-            @"DownloadStoriesDesc": @"Save stories to Photos from the story menu",
+            @"DownloadStories": @"Download Stories",
+            @"DownloadStoriesDesc": @"Save stories to library using three dots button inside story",
             @"DownloadStory": @"Download Story",
             @"Downloading": @"Downloading",
             @"SavedToPhotos": @"Saved to Photos",
@@ -203,38 +201,35 @@ static NSDictionary<NSString *, NSString *> *FlowFallbackStrings(void) {
             @"FailedDownloadVideo": @"Failed to Download Video",
             @"FailedSaveVideo": @"Failed to Save Video",
             @"Other": @"Other",
-            @"RemoveStoriesTab": @"Remove Stories tab",
-            @"RemoveFriendsTab": @"Remove Friends tab",
-            @"NoAiCircle": @"Hide Meta AI button",
-            @"CallConfirmation": @"Call confirmation",
+            @"RemoveStoriesTab": @"Remove Stories Tab",
+            @"RemoveFriendsTab": @"Remove Friends Tab",
+            @"NoAiCircle": @"Remove Meta AI button",
+            @"CallConfirmation": @"Require Call Confirmation",
             @"AudioCall": @"Audio Call",
             @"VideoCall": @"Video Call",
             @"Cancel": @"Cancel",
             @"Developer": @"Developers",
-            @"FollowMe": @"Follow %@ on X",
-            @"DiscordDesc": @"Join our Discord server",
-            @"GithubDesc": @"Source code & releases",
-            @"DvntmsDesc": @"Add my repo to Sileo/Zebra",
-            @"DonateMe": @"Buy me a coffee",
-            @"StoreDesc": @"Tweaked IPAs & signing service",
-            @"DeveloperFooter": @"Flow for Messenger"
+            @"FollowMe": @"Follow %@ on Twitter",
+            @"DiscordDesc": @"Join Discord Server for support & updates",
+            @"GithubDesc": @"Flow's repository on GitHub",
+            @"DvntmsDesc": @"All my tweaks in one place",
+            @"DonateMe": @"Every donation is deeply appreciated",
+            @"StoreDesc": @"Your #1 store for tweaked apps",
+            @"DeveloperFooter": @"Developed with ❤️ by Dan & Nasser"
         };
     });
     return dict;
 }
 
 static inline NSString *LOC(NSString *key) {
-    BOOL isAr = [[MsngrUserDefaults standardUserDefaults] boolForKey:@"isArLang"];
     NSBundle *bundle = [NSBundle msngr_defaultBundle];
     if (bundle) {
-        NSString *localized = [bundle localizedStringForKey:key
-                                                      value:nil
-                                                      table:isAr ? @"LocalizableAr" : @"Localizable"];
+        NSString *localized = [bundle localizedStringForKey:key value:nil table:@"Localizable"];
         if (localized && ![localized isEqualToString:key]) {
             return localized;
         }
     }
-    return FlowFallbackStrings()[key] ?: key;
+    return FlowEnglishStrings()[key] ?: key;
 }
 
 static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSString *sfSymbolFallback) {
@@ -245,7 +240,6 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
     }
     return [UIImage systemImageNamed:sfSymbolFallback];
 }
-
 
 @interface SettingsViewController : UIViewController <UITableViewDelegate, UITableViewDataSource> {
     NSArray *_sections;
@@ -259,7 +253,6 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 @property (nonatomic, strong) UITableView *tableView;
 - (UIImage *)devCellImage:(NSString *)imgName;
 - (void)toggleSwitch:(UISwitch *)sender;
-- (void)locButtonTapped:(UIBarButtonItem *)sender;
 - (void)updateInterfaceForTraitCollection:(UITraitCollection *)traitCollection;
 @end
 
@@ -312,15 +305,6 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-
-    BOOL isAr = [[MsngrUserDefaults standardUserDefaults] boolForKey:@"isArLang"];
-    UIImage *langIcon = [FlowBundleOrSystemImage(isAr ? @"ar" : @"non_ar", @"globe")
-                         imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:langIcon
-                                                                              style:UIBarButtonItemStylePlain
-                                                                             target:self
-                                                                             action:@selector(locButtonTapped:)];
 
     self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped];
     self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -397,11 +381,7 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 
     NSArray *rawTitles = @[@"Dayanch96", @"Discord", @"Github", @"Dan's Workshop", @"Nasser | NoTimeToChill", @"Ko-Fi", @"Nasser iPA Store"];
     if ([rawTitles containsObject:titleKey]) {
-        if ([titleKey isEqualToString:@"Nasser iPA Store"] && [[MsngrUserDefaults standardUserDefaults] boolForKey:@"isArLang"]) {
-            cell.textLabel.text = @"متجر ناصر لتطبيقات البلس";
-        } else {
-            cell.textLabel.text = titleKey;
-        }
+        cell.textLabel.text = titleKey;
     }
 
     NSString *descKey = item[@"desc"];
@@ -473,21 +453,15 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
     NSDictionary *item = _sections[section][row];
     [[MsngrUserDefaults standardUserDefaults] setBool:sender.isOn forKey:item[@"key"]];
     [[MsngrUserDefaults standardUserDefaults] synchronize];
-}
-
-- (void)locButtonTapped:(UIBarButtonItem *)sender {
-    BOOL isAr = ![[MsngrUserDefaults standardUserDefaults] boolForKey:@"isArLang"];
-    [[MsngrUserDefaults standardUserDefaults] setBool:isAr forKey:@"isArLang"];
-    [[MsngrUserDefaults standardUserDefaults] synchronize];
-
-    UIImage *langIcon = [FlowBundleOrSystemImage(isAr ? @"ar" : @"non_ar", @"globe")
-                         imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-    [sender setImage:langIcon];
-    [self.tableView reloadData];
+    if (gActiveTabBar) {
+        [gActiveTabBar items];
+        [gActiveTabBar setNeedsLayout];
+        [gActiveTabBar layoutIfNeeded];
+        [gActiveTabBar layoutSubviews];
+    }
 }
 
 @end
-
 
 NSURL *fakeGroupContainerURL = nil;
 
@@ -517,10 +491,7 @@ static NSString *keychainAccessGroup(void) {
         }
         if (status == errSecSuccess && result) {
             accessGroup = [(__bridge NSDictionary *)result objectForKey:(__bridge id)kSecAttrAccessGroup];
-            NSLog(@"FLOW --- keychainAccessGroup: %@", accessGroup);
             CFRelease(result);
-        } else {
-            NSLog(@"FLOW --- Error retrieving item from Keychain: %d", (int)status);
         }
     });
     return accessGroup;
@@ -576,8 +547,7 @@ static NSString *keychainAccessGroup(void) {
 - (void)_THROW_EXCEPTION_FOR_PROCESS_MISSING_ENTITLEMENT_com_apple_developer_siri {}
 %end
 
-%end 
-
+%end
 
 void showConfirmation(UIViewController *vc, void (^sendEmojiBlock)(void)) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil
@@ -607,7 +577,6 @@ void showConfirmation(UIViewController *vc, void (^sendEmojiBlock)(void)) {
     [alert addAction:[UIAlertAction actionWithTitle:LOC(@"Cancel")
                                               style:UIAlertActionStyleCancel
                                             handler:nil]];
-
 
     UIPopoverPresentationController *popover = alert.popoverPresentationController;
     if (popover && vc.view) {
@@ -694,11 +663,9 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     });
 }
 
-
 %group MessengerHooks
 
 %hook MSGThreadListDataSource
-
 
 - (NSArray *)inboxRows {
     NSMutableArray *rows = [[%orig mutableCopy] autorelease];
@@ -718,7 +685,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     return [rows copy];
 }
 
-
 - (NSArray *)inboxPYMKUserModels {
     if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"noPYMK"]) {
         return nil;
@@ -728,7 +694,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %end
 
-
 %hook MSGHighlightsTabPeopleYouMayKnowFeedItemContentView
 - (void)_setUpPymkView {
     if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"noPYMK"]) {
@@ -736,7 +701,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     }
 }
 %end
-
 
 %hook UIButton
 - (void)layoutSubviews {
@@ -751,24 +715,32 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %hook LSComposerViewController
 
-
 - (void)lsTextViewDidUpdateText:(UITextView *)textView isProgrammatically:(BOOL)isProgrammatically {
     if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"noTypingIndicator"]) {
-
-
-        %orig(textView, YES);
+        if (class_getInstanceVariable([self class], "_sendButton") &&
+            class_getInstanceVariable([self class], "_mainOtherActionButton")) {
+            UIView *sendButton = [self valueForKey:@"_sendButton"];
+            UIView *otherButton = [self valueForKey:@"_mainOtherActionButton"];
+            BOOL hasText = textView.text.length > 0;
+            [sendButton setHidden:!hasText];
+            [sendButton setEnabled:hasText];
+            [sendButton setAlpha:hasText ? 1.0 : 0.0];
+            [otherButton setHidden:hasText];
+            if ([self respondsToSelector:@selector(composerBarCollapseBehavior)]) {
+                [[self composerBarCollapseBehavior] renderComposerBarForState:1];
+                [[self composerBarCollapseBehavior] _updateTextViewForComposerBarState:1];
+            }
+        }
         return;
     }
-    %orig(textView, isProgrammatically);
+    %orig;
 }
-
 
 - (void)updateComposerPlaceholderTextForExpandedState {
     if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"noTypingIndicator"]) {
         %orig;
     }
 }
-
 
 - (void)_didPressEmojiButton:(id)sender {
     if ([self.parentViewController isKindOfClass:%c(MSGThreadViewController)] &&
@@ -780,7 +752,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
         %orig;
     }
 }
-
 
 - (void)_didPressOtherActionButton {
     if ([self.parentViewController isKindOfClass:%c(MSGThreadViewController)] &&
@@ -795,7 +766,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %end
 
-
 %hook MSGMessageListViewController
 - (void)viewDidLoad {
     %orig;
@@ -808,20 +778,11 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %hook LSStoryBucketViewController
 
-
 - (void)startTimer {
     if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"storiesAnon"]) {
         %orig;
     }
 }
-
-
-- (void)didFullyDisplayBucket {
-    if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"storiesAnon"]) {
-        %orig;
-    }
-}
-
 
 - (void)videoDidPlayToEnd:(id)arg1 {
     if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"loopStories"]) {
@@ -836,13 +797,11 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %end
 
-
 %hook LSMediaViewController
 - (BOOL)canSaveMedia    { return YES; }
 - (BOOL)canForwardMedia { return YES; }
 - (BOOL)canShareMedia   { return YES; }
 %end
-
 
 %hook LSStoryOverlayProfileView
 - (void)setActionHandler:(void (^)(UIAlertController *))actionHandler {
@@ -859,11 +818,8 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
                                                         handler:^(UIAlertAction *action) {
                     UIViewController *vc = [[self _viewControllerForAncestor] parentViewController];
                     if ([vc isKindOfClass:%c(LSStoryBucketViewController)]) {
-                        BOOL prev = [[MsngrUserDefaults standardUserDefaults] boolForKey:@"storiesAnon"];
-                        [[MsngrUserDefaults standardUserDefaults] setBool:NO forKey:@"storiesAnon"];
                         [(LSStoryBucketViewController *)vc didFullyDisplayBucket];
                         [(LSStoryBucketViewController *)vc startTimer];
-                        [[MsngrUserDefaults standardUserDefaults] setBool:prev forKey:@"storiesAnon"];
                     }
                 }]];
             }
@@ -929,63 +885,39 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-
 %hook UITabBar
-- (void)layoutSubviews {
-    %orig;
-    if (!objc_getAssociatedObject(self, @selector(flow_handleTabBarLongPress:))) {
-        UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(flow_handleTabBarLongPress:)];
-        lp.minimumPressDuration = 0.6;
-        [self addGestureRecognizer:lp];
-        objc_setAssociatedObject(self, @selector(flow_handleTabBarLongPress:), lp, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-}
-
-%new
-- (void)flow_handleTabBarLongPress:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        UIViewController *rootVC = [[[UIApplication sharedApplication] delegate] window].rootViewController;
-        while (rootVC.presentedViewController) {
-            rootVC = rootVC.presentedViewController;
-        }
-        SettingsViewController *settingsVC = [[SettingsViewController alloc] init];
-        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:settingsVC];
-        [rootVC presentViewController:nav animated:YES completion:nil];
-    }
-}
-
 - (NSArray *)items {
+    gActiveTabBar = self;
     NSMutableArray *items = [[%orig mutableCopy] autorelease];
     NSIndexSet *indexesToRemove = [items indexesOfObjectsPassingTest:^BOOL(MDSTabBarItem *item, NSUInteger idx, BOOL *stop) {
+        BOOL shouldHide = NO;
         if ([item respondsToSelector:@selector(props)]) {
             NSString *ident = [[item props] accessibilityIdentifierText];
             if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"noStoriesTab"] &&
                 [ident isEqualToString:@"tabbar-stories"]) {
-                [[item view] setHidden:YES];
-                return YES;
+                shouldHide = YES;
             }
             if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"noFriendsTab"] &&
                 [ident isEqualToString:@"tabbar-highlights"]) {
-                [[item view] setHidden:YES];
-                return YES;
+                shouldHide = YES;
             }
         }
-        return NO;
+        [[item view] setHidden:shouldHide];
+        return shouldHide;
     }];
     [items removeObjectsAtIndexes:indexesToRemove];
     return [items copy];
 }
 %end
 
-
 %hook LSTargetAction
 - (void)handle:(id)sender {
     if (class_getInstanceVariable([self class], "_context") &&
         [[MsngrUserDefaults standardUserDefaults] boolForKey:@"callConfirmation"]) {
         UIView *context = [self valueForKey:@"_context"];
-        if ([context isKindOfClass:[UIView class]] && context.subviews.count > 0) {
-            UIView *firstSub = context.subviews[0];
-            if ([firstSub.superview.description containsString:@"RTCCallButton"]) {
+        if ([context isKindOfClass:[UIView class]]) {
+            UIView *firstSub = [context.subviews firstObject];
+            if (firstSub && [firstSub.superview.description containsString:@"RTCCallButton"]) {
                 BOOL isVoiceCall = [firstSub.accessibilityIdentifier isEqualToString:@"rtc-voice-call-button"];
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil
                                                                                message:nil
@@ -1013,7 +945,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-
 %hook MSGSettingsViewController
 - (void)viewDidLoad {
     %orig;
@@ -1037,7 +968,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-
 %hook MSGCommunityListViewController
 - (void)viewDidLoad {
     %orig;
@@ -1057,13 +987,10 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-%end 
-
+%end
 
 %ctor {
     @autoreleasepool {
-
-
         NSDictionary *entitlements = [[LSApplicationProxy bundleProxyForCurrentProcess] entitlements];
         BOOL isOfficialSigning = [entitlements[@"application-identifier"] isEqualToString:@"T84QZS65DQ.com.facebook.Messenger"];
         BOOL isOfficialBundleID = [[[NSBundle mainBundle] infoDictionary][@"CFBundleIdentifier"] isEqualToString:@"com.facebook.Messenger"];
@@ -1096,7 +1023,6 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
             fakeGroupContainerURL = [NSURL fileURLWithPath:fakeContainersPath isDirectory:YES];
             %init(SideloadedFixes);
         }
-
 
         %init(MessengerHooks);
     }

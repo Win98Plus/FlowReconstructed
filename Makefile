@@ -14,7 +14,7 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 
 before-all::
 	@if [ ! -f control ]; then \
-		printf "Package: com.dvntm.flow\nName: Flow for Messenger\nDescription: A lightweight Messenger enhancer (Bug-Fixed v1.0.1)\nMaintainer: dvntm, nowesr1\nAuthor: dvntm, nowesr1\nSection: Tweaks\nDepends: mobilesubstrate (>= 0.9.5000)\nIcon: https://raw.githubusercontent.com/dayanch96/Flow/refs/heads/main/Sileo/icon.png\nSileoDepiction: https://raw.githubusercontent.com/dayanch96/Flow/main/Sileo/depiction.json\nArchitecture: iphoneos-arm64e\nVersion: 1.0.1\n" > control; \
+		printf "Package: com.dvntm.flow\nName: Flow for Messenger\nDescription: A lightweight Messenger enhancer\nMaintainer: dvntm, nowesr1\nAuthor: dvntm, nowesr1\nSection: Tweaks\nDepends: mobilesubstrate (>= 0.9.5000)\nIcon: https://raw.githubusercontent.com/dayanch96/Flow/refs/heads/main/Sileo/icon.png\nSileoDepiction: https://raw.githubusercontent.com/dayanch96/Flow/main/Sileo/depiction.json\nArchitecture: iphoneos-arm64e\nVersion: 1.0.1\n" > control; \
 	fi
 	@if [ ! -f Flow.plist ]; then \
 		printf '{ Filter = { Bundles = ( "com.facebook.Messenger" ); }; }\n' > Flow.plist; \
@@ -35,4 +35,3 @@ livecontainer: all
 	elif command -v codesign >/dev/null 2>&1; then \
 		codesign -f -s - build_livecontainer/Flow.dylib; \
 	fi
-	@echo "LiveContainer dylib ready at: build_livecontainer/Flow.dylib"
