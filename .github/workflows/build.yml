@@ -1,0 +1,23 @@
+name: Build Flow LiveContainer Dylib
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+      - name: Build Flow.dylib for LiveContainer
+        run: |
+          export THEOS=$HOME/theos
+          bash ./build.sh
+      - name: Upload Flow.dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flow.dylib
+          path: dist/Flow.dylib
