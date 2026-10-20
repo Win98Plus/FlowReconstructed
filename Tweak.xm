@@ -1,28 +1,3 @@
-// ============================================================================
-// Flow for Messenger v1.0.1 (com.dvntm.flow) — Reconstructed & Bug-Fixed Source
-// Original Authors: dvntm (dayanch96), nowesr1
-// Upload: Win98Plus
-// Community Bugs Fixed in v1.0.1:
-//   [Fix #1] Removed all 42 Hikari inline `SVC` (`ptrace(PT_DENY_ATTACH)`) traps
-//            that caused crashes on iOS 18.5+ / iOS 26 and LiveContainer.
-//   [Fix #2] Removed the `_abort()` trap (0x0065c0 -> 0x007804 -> 0x0077fc) when
-//            other `.dylib` tweaks exist (AppDB, Feather, ESign, Signulous,
-//            LiveContainer `TweakLoader.dylib`).
-//   [Fix #3] Replaced hardcoded `libroothide.dylib` (`__Z6jbrootP8NSString`)
-//            requirement with dynamic `dlsym` lookup + Rootless `/var/jb` +
-//            built-in English & SF Symbols fallback when `Flow.bundle` is absent.
-//   [Fix #4] Fixed `noTypingIndicator` breaking `@mention` autocomplete in group
-//            chats (`kalvin026` report) by invoking `%orig(textView, YES)` so
-//            Messenger updates `@mention` and composer state as programmatic input.
-//   [Fix #5] Fixed `noStoriesTab` / `noFriendsTab` shifting `UITabBar` indices and
-//            locking users out of Flow Settings (`zekosama` & `kenwang92` report),
-//            plus added a universal long-press gesture on the navigation/tab bar
-//            to open Flow Settings from anywhere.
-//   [Fix #6] Fixed `UIAlertControllerStyleActionSheet` popover crash on iPad /
-//            modern iOS (`Rekiblik` report) and hardened `storiesAnon` on v550+
-//            by also blocking `-[LSStoryBucketViewController didFullyDisplayBucket]`.
-// Don't ask me why i wrote it, i'm lazy to remember, i'm using Windows, not macOS, use xtool to build, theos with Linux subsystem to build, bla bla
-// ============================================================================
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
@@ -36,9 +11,6 @@
 #define %c(cls) NSClassFromString(@#cls)
 #endif
 
-// ============================================================================
-// MARK: - Forward Declarations of Messenger & Private Classes
-// ============================================================================
 
 @interface LSApplicationProxy : NSObject
 + (instancetype)bundleProxyForCurrentProcess;
@@ -128,9 +100,6 @@
 - (void)msngrButtonTapped:(id)sender;
 @end
 
-// ============================================================================
-// MARK: - 1. NSBundle (Msngr) Category (0x02573c & 0x0257c4) + [Fix #3]
-// ============================================================================
 
 @interface NSBundle (Msngr)
 + (NSBundle *)msngr_defaultBundle;
@@ -149,7 +118,7 @@
         }
 
         NSString *defaultPath = @"/Library/Application Support/Flow.bundle";
-        // [Fix #3] Dynamically resolve jbroot via dlsym so libroothide.dylib is never required
+
         typedef NSString *(*jbroot_func_t)(NSString *);
         jbroot_func_t jbroot_fn = (jbroot_func_t)dlsym(RTLD_DEFAULT, "__Z6jbrootP8NSString");
         if (!jbroot_fn) {
@@ -179,9 +148,6 @@
 
 @end
 
-// ============================================================================
-// MARK: - 2. MsngrUserDefaults (0x024b54, 0x024c08, 0x024e30, 0x025008)
-// ============================================================================
 
 @interface MsngrUserDefaults : NSUserDefaults
 + (instancetype)standardUserDefaults;
@@ -208,7 +174,7 @@
 
 @end
 
-// [Fix #3] Built-in English fallback dictionary if Flow.bundle is omitted in LiveContainer
+
 static NSDictionary<NSString *, NSString *> *FlowFallbackStrings(void) {
     static NSDictionary<NSString *, NSString *> *dict = nil;
     static dispatch_once_t onceToken;
@@ -281,9 +247,6 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
     return [UIImage systemImageNamed:sfSymbolFallback];
 }
 
-// ============================================================================
-// MARK: - 3. SettingsViewController (0x016e68 - 0x01f83c)
-// ============================================================================
 
 @interface SettingsViewController : UIViewController <UITableViewDelegate, UITableViewDataSource> {
     NSArray *_sections;
@@ -526,10 +489,6 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 
 @end
 
-// ============================================================================
-// MARK: - 4. Sideloading, FakeGroupContainers & Keychain Group Hooks
-// (Functions 0x004000, 0x0040e0, 0x0065c4, 0x006844..0x0068a0)
-// ============================================================================
 
 NSURL *fakeGroupContainerURL = nil;
 
@@ -618,11 +577,8 @@ static NSString *keychainAccessGroup(void) {
 - (void)_THROW_EXCEPTION_FOR_PROCESS_MISSING_ENTITLEMENT_com_apple_developer_siri {}
 %end
 
-%end // %group SideloadedFixes
+%end 
 
-// ============================================================================
-// MARK: - 5. Helper Functions: showConfirmation (0x0080b0) & HUD Toast (0x011814)
-// ============================================================================
 
 void showConfirmation(UIViewController *vc, void (^sendEmojiBlock)(void)) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil
@@ -653,7 +609,7 @@ void showConfirmation(UIViewController *vc, void (^sendEmojiBlock)(void)) {
                                               style:UIAlertActionStyleCancel
                                             handler:nil]];
 
-    // [Fix #6] Prevent iPad / modern iOS UIPopoverPresentationController crash
+
     UIPopoverPresentationController *popover = alert.popoverPresentationController;
     if (popover && vc.view) {
         popover.sourceView = vc.view;
@@ -739,15 +695,12 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     });
 }
 
-// ============================================================================
-// MARK: - 6. Messenger Hooks (Constructor 2 at 0x00947c, Hooks 0x00a980 - 0x013a90)
-// ============================================================================
 
 %group MessengerHooks
 
 %hook MSGThreadListDataSource
 
-// 0x00a980 & block 0x00ebcc
+
 - (NSArray *)inboxRows {
     NSMutableArray *rows = [[%orig mutableCopy] autorelease];
     NSIndexSet *indexesToRemove = [rows indexesOfObjectsPassingTest:^BOOL(id obj, NSUInteger idx, BOOL *stop) {
@@ -766,7 +719,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     return [rows copy];
 }
 
-// 0x00aa30
+
 - (NSArray *)inboxPYMKUserModels {
     if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"noPYMK"]) {
         return nil;
@@ -776,7 +729,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %end
 
-// 0x00abd8
+
 %hook MSGHighlightsTabPeopleYouMayKnowFeedItemContentView
 - (void)_setUpPymkView {
     if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"noPYMK"]) {
@@ -785,7 +738,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-// 0x00ad84
+
 %hook UIButton
 - (void)layoutSubviews {
     %orig;
@@ -799,25 +752,25 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %hook LSComposerViewController
 
-// 0x00b160 — [Fix #4] Preserve @mention autocomplete in group chats when noTypingIndicator is ON
+
 - (void)lsTextViewDidUpdateText:(UITextView *)textView isProgrammatically:(BOOL)isProgrammatically {
     if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"noTypingIndicator"]) {
-        // Passing isProgrammatically = YES updates @mention autocomplete and Send/Like buttons
-        // without triggering a user-keystroke typing indicator over MQTT/LightSpeed
+
+
         %orig(textView, YES);
         return;
     }
     %orig(textView, isProgrammatically);
 }
 
-// 0x00ba90
+
 - (void)updateComposerPlaceholderTextForExpandedState {
     if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"noTypingIndicator"]) {
         %orig;
     }
 }
 
-// 0x00bcdc
+
 - (void)_didPressEmojiButton:(id)sender {
     if ([self.parentViewController isKindOfClass:%c(MSGThreadViewController)] &&
         [[MsngrUserDefaults standardUserDefaults] boolForKey:@"msgAnon"]) {
@@ -829,7 +782,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     }
 }
 
-// 0x00c170
+
 - (void)_didPressOtherActionButton {
     if ([self.parentViewController isKindOfClass:%c(MSGThreadViewController)] &&
         [[MsngrUserDefaults standardUserDefaults] boolForKey:@"msgAnon"]) {
@@ -843,7 +796,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %end
 
-// 0x00c5d0
+
 %hook MSGMessageListViewController
 - (void)viewDidLoad {
     %orig;
@@ -856,21 +809,21 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %hook LSStoryBucketViewController
 
-// 0x00cacc
+
 - (void)startTimer {
     if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"storiesAnon"]) {
         %orig;
     }
 }
 
-// [Fix #6] Also block didFullyDisplayBucket when storiesAnon is enabled on Messenger v550+
+
 - (void)didFullyDisplayBucket {
     if (![[MsngrUserDefaults standardUserDefaults] boolForKey:@"storiesAnon"]) {
         %orig;
     }
 }
 
-// 0x00cce4
+
 - (void)videoDidPlayToEnd:(id)arg1 {
     if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"loopStories"]) {
         [self playFromBeginningWhenPossible];
@@ -884,14 +837,14 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 
 %end
 
-// 0x00cf2c, 0x00cf34, 0x00cf3c
+
 %hook LSMediaViewController
 - (BOOL)canSaveMedia    { return YES; }
 - (BOOL)canForwardMedia { return YES; }
 - (BOOL)canShareMedia   { return YES; }
 %end
 
-// 0x00cf44 & blocks 0x00f39c, 0x00fd90, 0x01014c, 0x010cb8, 0x01107c, 0x0124b8, 0x012c80
+
 %hook LSStoryOverlayProfileView
 - (void)setActionHandler:(void (^)(UIAlertController *))actionHandler {
     %orig;
@@ -977,7 +930,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-// 0x00d39c & block 0x0133c0 — [Fix #5] Also attach long-press on UITabBar to open Flow Settings anytime
+
 %hook UITabBar
 - (void)layoutSubviews {
     %orig;
@@ -1025,7 +978,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-// 0x00d44c
+
 %hook LSTargetAction
 - (void)handle:(id)sender {
     if (class_getInstanceVariable([self class], "_context") &&
@@ -1061,7 +1014,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-// 0x00e43c & 0x00e8cc
+
 %hook MSGSettingsViewController
 - (void)viewDidLoad {
     %orig;
@@ -1085,7 +1038,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-// 0x00e950 & 0x00eb64
+
 %hook MSGCommunityListViewController
 - (void)viewDidLoad {
     %orig;
@@ -1105,16 +1058,13 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
-%end // %group MessengerHooks
+%end 
 
-// ============================================================================
-// MARK: - 7. Constructors (0x0040e0 & 0x00947c) — [Fix #1 & Fix #2]
-// ============================================================================
 
 %ctor {
     @autoreleasepool {
-        // Constructor 1 (0x0040e0): Check if sideloaded / non-official entitlements
-        // [Fix #2] Removed the _abort() crash when other .dylib tweaks are injected
+
+
         NSDictionary *entitlements = [[LSApplicationProxy bundleProxyForCurrentProcess] entitlements];
         BOOL isOfficialSigning = [entitlements[@"application-identifier"] isEqualToString:@"T84QZS65DQ.com.facebook.Messenger"];
         BOOL isOfficialBundleID = [[[NSBundle mainBundle] infoDictionary][@"CFBundleIdentifier"] isEqualToString:@"com.facebook.Messenger"];
@@ -1148,7 +1098,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
             %init(SideloadedFixes);
         }
 
-        // Constructor 2 (0x00947c): Initialize Messenger feature hooks
+
         %init(MessengerHooks);
     }
 }
