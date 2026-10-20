@@ -6,7 +6,6 @@
 #import <objc/runtime.h>
 #import <mach-o/dyld.h>
 #import <dlfcn.h>
-
 #ifndef __LOGOS_H
 #define %c(cls) NSClassFromString(@#cls)
 #endif
