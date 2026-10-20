@@ -26,7 +26,7 @@ The fixes target specific issues found during reverse engineering. They do not g
 
 ## Fixes
 
-The following issues have been addressed in the source code.
+The following issues have been addressed in the original source code.
 
 | Issue | Cause | Fix |
 |---|---|---|
