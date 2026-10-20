@@ -5,10 +5,21 @@
 #import <Security/Security.h>
 #import <objc/runtime.h>
 #import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+#import <mach-o/nlist.h>
+#import <mach/mach.h>
+#import <mach/vm_map.h>
 #import <dlfcn.h>
+#import <sqlite3.h>
+#import <string.h>
+#import <stdlib.h>
 
 #ifndef __LOGOS_H
 #define %c(cls) NSClassFromString(@#cls)
+#endif
+
+#ifndef SEG_DATA_CONST
+#define SEG_DATA_CONST "__DATA_CONST"
 #endif
 
 @interface LSApplicationProxy : NSObject
@@ -56,6 +67,17 @@
 @interface MSGMessageListViewController : UIViewController
 @end
 
+@interface MSGTempMessageListItemModel : NSObject
+- (BOOL)isTombstoned;
+- (BOOL)isMediaGapTombstoned;
+- (BOOL)isNoteTombstoned;
+- (BOOL)isSpectraTombstoned;
+@end
+
+@interface MSGTempMessageAttachmentListItemModel : NSObject
+- (BOOL)isTombstoned;
+@end
+
 @interface LSMediaItem : NSObject
 - (NSInteger)mediaType;
 - (NSString *)mediaUrl;
@@ -101,6 +123,8 @@
 
 static NSString *gCrashLogFilePath = nil;
 static NSMutableString *gCrashLogBuffer = nil;
+static BOOL gAntiUnsend = NO;
+static __weak UITabBar *gActiveTabBar = nil;
 
 static NSString *FlowEnsureLogFilePath(void) {
     static dispatch_once_t onceToken;
@@ -143,7 +167,165 @@ static void FlowInstallCrashHandlers(void) {
     NSSetUncaughtExceptionHandler(&FlowUncaughtExceptionHandler);
 }
 
-static __weak UITabBar *gActiveTabBar = nil;
+static char *FlowReplaceSubstring(const char *haystack, const char *needle, const char *replacement) {
+    const char *pos = strstr(haystack, needle);
+    if (!pos) return NULL;
+    size_t prefixLen = (size_t)(pos - haystack);
+    size_t needleLen = strlen(needle);
+    size_t replLen = strlen(replacement);
+    size_t suffixLen = strlen(pos + needleLen);
+    char *out = (char *)malloc(prefixLen + replLen + suffixLen + 1);
+    if (!out) return NULL;
+    memcpy(out, haystack, prefixLen);
+    memcpy(out + prefixLen, replacement, replLen);
+    memcpy(out + prefixLen + replLen, pos + needleLen, suffixLen + 1);
+    return out;
+}
+
+static int (*orig_sqlite3_prepare_v2)(sqlite3 *db, const char *zSql, int nByte, sqlite3_stmt **ppStmt, const char **pzTail) = NULL;
+
+static int hook_sqlite3_prepare_v2(sqlite3 *db, const char *zSql, int nByte, sqlite3_stmt **ppStmt, const char **pzTail) {
+    char *allocatedSql = NULL;
+    if (gAntiUnsend && zSql) {
+        if (strncmp(zSql, "UPDATE client_messages SET is_hidden = 1, is_tombstoned = 1", 59) == 0) {
+            char *step1 = FlowReplaceSubstring(zSql, "is_hidden = 1, is_tombstoned = 1", "is_hidden = 0, is_tombstoned = 0");
+            if (step1) {
+                char *step2 = FlowReplaceSubstring(
+                    step1,
+                    "text = NULL WHERE pk = ?",
+                    "text = (IFNULL(text || char(10), '') || '[Unsent Message]') WHERE pk = ? AND (text IS NULL OR text NOT LIKE '%[Unsent Message]%')"
+                );
+                if (step2) {
+                    free(step1);
+                    allocatedSql = step2;
+                } else {
+                    allocatedSql = step1;
+                }
+                zSql = allocatedSql;
+                nByte = -1;
+            }
+        } else if (strncmp(zSql, "DELETE FROM attachments WHERE", 29) == 0 ||
+                   strncmp(zSql, "DELETE FROM client_attachments WHERE message_pk", 47) == 0) {
+            size_t len = strlen(zSql);
+            allocatedSql = (char *)malloc(len + 7);
+            if (allocatedSql) {
+                memcpy(allocatedSql, zSql, len);
+                memcpy(allocatedSql + len, " AND 0", 7);
+                zSql = allocatedSql;
+                nByte = -1;
+            }
+        }
+    }
+    int rc = orig_sqlite3_prepare_v2 ? orig_sqlite3_prepare_v2(db, zSql, nByte, ppStmt, pzTail) : SQLITE_ERROR;
+    if (allocatedSql) {
+        free(allocatedSql);
+    }
+    return rc;
+}
+
+static void FlowRebindSection(const struct section_64 *section,
+                              intptr_t slide,
+                              struct nlist_64 *symtab,
+                              char *strtab,
+                              uint32_t *indirect_symtab,
+                              const char *targetName,
+                              void *replacement,
+                              void **origOut) {
+    const bool isDataConst = strcmp(section->segname, SEG_DATA_CONST) == 0;
+    uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
+    void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
+    vm_prot_t oldProtection = VM_PROT_READ;
+    if (isDataConst) {
+        vm_protect(mach_task_self(), (vm_address_t)indirect_symbol_bindings, section->size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    }
+    size_t count = section->size / sizeof(void *);
+    for (size_t i = 0; i < count; i++) {
+        uint32_t symtab_index = indirect_symbol_indices[i];
+        if (symtab_index == INDIRECT_SYMBOL_ABS ||
+            symtab_index == INDIRECT_SYMBOL_LOCAL ||
+            symtab_index == (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS)) {
+            continue;
+        }
+        uint32_t strtab_offset = symtab[symtab_index].n_un.n_strx;
+        char *symbol_name = strtab + strtab_offset;
+        if (symbol_name[0] == '_' && strcmp(&symbol_name[1], targetName) == 0) {
+            if (origOut && *origOut == NULL && indirect_symbol_bindings[i] != replacement) {
+                *origOut = indirect_symbol_bindings[i];
+            }
+            indirect_symbol_bindings[i] = replacement;
+        }
+    }
+    if (isDataConst) {
+        vm_protect(mach_task_self(), (vm_address_t)indirect_symbol_bindings, section->size, FALSE, oldProtection);
+    }
+}
+
+static void FlowRebindImage(const struct mach_header *header, intptr_t slide) {
+    if (header->magic != MH_MAGIC_64) return;
+    const struct mach_header_64 *header64 = (const struct mach_header_64 *)header;
+    struct segment_command_64 *linkedit_segment = NULL;
+    struct symtab_command *symtab_cmd = NULL;
+    struct dysymtab_command *dysymtab_cmd = NULL;
+
+    uintptr_t cur = (uintptr_t)header64 + sizeof(struct mach_header_64);
+    for (uint32_t i = 0; i < header64->ncmds; i++) {
+        struct load_command *lc = (struct load_command *)cur;
+        if (lc->cmd == LC_SEGMENT_64) {
+            struct segment_command_64 *seg = (struct segment_command_64 *)lc;
+            if (strcmp(seg->segname, SEG_LINKEDIT) == 0) {
+                linkedit_segment = seg;
+            }
+        } else if (lc->cmd == LC_SYMTAB) {
+            symtab_cmd = (struct symtab_command *)lc;
+        } else if (lc->cmd == LC_DYSYMTAB) {
+            dysymtab_cmd = (struct dysymtab_command *)lc;
+        }
+        cur += lc->cmdsize;
+    }
+
+    if (!linkedit_segment || !symtab_cmd || !dysymtab_cmd || !dysymtab_cmd->nindirectsyms) {
+        return;
+    }
+
+    uintptr_t linkedit_base = (uintptr_t)slide + linkedit_segment->vmaddr - linkedit_segment->fileoff;
+    struct nlist_64 *symtab = (struct nlist_64 *)(linkedit_base + symtab_cmd->symoff);
+    char *strtab = (char *)(linkedit_base + symtab_cmd->stroff);
+    uint32_t *indirect_symtab = (uint32_t *)(linkedit_base + dysymtab_cmd->indirectsymoff);
+
+    cur = (uintptr_t)header64 + sizeof(struct mach_header_64);
+    for (uint32_t i = 0; i < header64->ncmds; i++) {
+        struct load_command *lc = (struct load_command *)cur;
+        if (lc->cmd == LC_SEGMENT_64) {
+            struct segment_command_64 *seg = (struct segment_command_64 *)lc;
+            if (strcmp(seg->segname, SEG_DATA) == 0 || strcmp(seg->segname, SEG_DATA_CONST) == 0) {
+                for (uint32_t j = 0; j < seg->nsects; j++) {
+                    struct section_64 *sect = (struct section_64 *)((uintptr_t)seg + sizeof(struct segment_command_64)) + j;
+                    uint8_t type = sect->flags & SECTION_TYPE;
+                    if (type == S_LAZY_SYMBOL_POINTERS || type == S_NON_LAZY_SYMBOL_POINTERS) {
+                        FlowRebindSection(sect, slide, symtab, strtab, indirect_symtab, "sqlite3_prepare_v2", (void *)&hook_sqlite3_prepare_v2, (void **)&orig_sqlite3_prepare_v2);
+                    }
+                }
+            }
+        }
+        cur += lc->cmdsize;
+    }
+}
+
+static void FlowInstallSqliteAntiUnsendHook(void) {
+    if (!orig_sqlite3_prepare_v2) {
+        orig_sqlite3_prepare_v2 = (int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **))dlsym(RTLD_DEFAULT, "sqlite3_prepare_v2");
+    }
+    _dyld_register_func_for_add_image(&FlowRebindImage);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *fwDir = [[[NSBundle mainBundle] bundlePath] stringByAppendingString:@"/Frameworks"];
+        dlopen([[fwDir stringByAppendingString:@"/LightSpeedEngine.framework/LightSpeedEngine"] UTF8String], RTLD_NOW);
+        dlopen([[fwDir stringByAppendingString:@"/LightSpeedCore.framework/LightSpeedCore"] UTF8String], RTLD_NOW);
+        uint32_t count = _dyld_image_count();
+        for (uint32_t i = 0; i < count; i++) {
+            FlowRebindImage(_dyld_get_image_header(i), _dyld_get_image_vmaddr_slide(i));
+        }
+    });
+}
 
 @interface NSBundle (Msngr)
 + (NSBundle *)msngr_defaultBundle;
@@ -210,7 +392,8 @@ static __weak UITabBar *gActiveTabBar = nil;
 
 - (void)registerDefaults {
     [self registerDefaults:@{
-        @"noAds": @YES
+        @"noAds": @YES,
+        @"antiUnsend": @YES
     }];
 }
 
@@ -228,6 +411,8 @@ static NSDictionary<NSString *, NSString *> *FlowEnglishStrings(void) {
             @"NoTypingIndicator": @"Disable Typing Indicator",
             @"ReadAnonymously": @"Read Messages Anonymously",
             @"ReadAnonymouslyDesc": @"Don't let people know when you've read their messages",
+            @"AntiUnsend": @"Anti-Unsend Messages",
+            @"AntiUnsendDesc": @"Keep messages and media unsent by others",
             @"SelectAction": @"Select Action",
             @"SendEmoji": @"Send Emoji",
             @"MarkMessagesAsSeen": @"Mark Messages as Seen",
@@ -310,7 +495,8 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
             @{@"title": @"RemoveStories", @"type": @"bool", @"key": @"noStories", @"id": @"chatsCell"},
             @{@"title": @"RemovePYMK", @"type": @"bool", @"key": @"noPYMK", @"id": @"chatsCell"},
             @{@"title": @"NoTypingIndicator", @"type": @"bool", @"key": @"noTypingIndicator", @"id": @"chatsCell"},
-            @{@"title": @"ReadAnonymously", @"desc": @"ReadAnonymouslyDesc", @"type": @"bool", @"key": @"msgAnon", @"id": @"chatsCell"}
+            @{@"title": @"ReadAnonymously", @"desc": @"ReadAnonymouslyDesc", @"type": @"bool", @"key": @"msgAnon", @"id": @"chatsCell"},
+            @{@"title": @"AntiUnsend", @"desc": @"AntiUnsendDesc", @"type": @"bool", @"key": @"antiUnsend", @"id": @"chatsCell"}
         ];
 
         _stories = @[
@@ -403,7 +589,7 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == [_sections indexOfObject:_nwsr]) {
         NSString *appVersion = [[NSBundle mainBundle] infoDictionary][@"CFBundleShortVersionString"];
-        return [NSString stringWithFormat:@"%@\n\nFlow: %@ • Messenger: %@", LOC(@"DeveloperFooter"), @"1.0.1", appVersion];
+        return [NSString stringWithFormat:@"%@\n\nFlow: %@ - Messenger: %@", LOC(@"DeveloperFooter"), @"1.0.2", appVersion];
     }
     return nil;
 }
@@ -417,8 +603,8 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"cell"];
     NSDictionary *item = _sections[indexPath.section][indexPath.row];
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:item[@"id"]];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:item[@"id"]];
     }
@@ -447,6 +633,8 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
         }
         cell.detailTextLabel.numberOfLines = 0;
         cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    } else {
+        cell.detailTextLabel.text = nil;
     }
 
     if ([item[@"type"] isEqualToString:@"bool"]) {
@@ -455,6 +643,7 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
         toggle.tag = (indexPath.section << 16) | indexPath.row;
         toggle.on = [[MsngrUserDefaults standardUserDefaults] boolForKey:item[@"key"]];
         toggle.onTintColor = self.tableView.tintColor;
+        cell.imageView.image = nil;
         cell.accessoryView = toggle;
     } else if ([item[@"type"] isEqualToString:@"link"]) {
         cell.imageView.image = [self devCellImage:item[@"img"]];
@@ -505,9 +694,13 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
     NSInteger section = sender.tag >> 16;
     NSInteger row = sender.tag & 0xFFFF;
     NSDictionary *item = _sections[section][row];
-    [[MsngrUserDefaults standardUserDefaults] setBool:sender.isOn forKey:item[@"key"]];
+    NSString *key = item[@"key"];
+    [[MsngrUserDefaults standardUserDefaults] setBool:sender.isOn forKey:key];
     [[MsngrUserDefaults standardUserDefaults] synchronize];
-    FlowWriteLog([NSString stringWithFormat:@"Toggled %@ = %d", item[@"key"], (int)sender.isOn]);
+    if ([key isEqualToString:@"antiUnsend"]) {
+        gAntiUnsend = sender.isOn;
+    }
+    FlowWriteLog([NSString stringWithFormat:@"Toggled %@ = %d", key, (int)sender.isOn]);
     if (gActiveTabBar) {
         [gActiveTabBar items];
         [gActiveTabBar setNeedsLayout];
@@ -834,6 +1027,42 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 %end
 
+%hook MSGTempMessageListItemModel
+- (BOOL)isTombstoned {
+    if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"antiUnsend"]) {
+        return NO;
+    }
+    return %orig;
+}
+- (BOOL)isMediaGapTombstoned {
+    if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"antiUnsend"]) {
+        return NO;
+    }
+    return %orig;
+}
+- (BOOL)isNoteTombstoned {
+    if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"antiUnsend"]) {
+        return NO;
+    }
+    return %orig;
+}
+- (BOOL)isSpectraTombstoned {
+    if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"antiUnsend"]) {
+        return NO;
+    }
+    return %orig;
+}
+%end
+
+%hook MSGTempMessageAttachmentListItemModel
+- (BOOL)isTombstoned {
+    if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"antiUnsend"]) {
+        return NO;
+    }
+    return %orig;
+}
+%end
+
 %hook LSStoryBucketViewController
 
 - (void)startTimer {
@@ -1052,6 +1281,9 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 %ctor {
     @autoreleasepool {
         FlowInstallCrashHandlers();
+        gAntiUnsend = [[MsngrUserDefaults standardUserDefaults] boolForKey:@"antiUnsend"];
+        FlowInstallSqliteAntiUnsendHook();
+
         NSDictionary *entitlements = [[LSApplicationProxy bundleProxyForCurrentProcess] entitlements];
         BOOL isOfficialSigning = [entitlements[@"application-identifier"] isEqualToString:@"T84QZS65DQ.com.facebook.Messenger"];
         BOOL isOfficialBundleID = [[[NSBundle mainBundle] infoDictionary][@"CFBundleIdentifier"] isEqualToString:@"com.facebook.Messenger"];
