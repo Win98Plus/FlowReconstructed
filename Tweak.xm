@@ -14,10 +14,6 @@
 #import <string.h>
 #import <stdlib.h>
 
-#ifndef __LOGOS_H
-#define %c(cls) NSClassFromString(@#cls)
-#endif
-
 #ifndef SEG_DATA_CONST
 #define SEG_DATA_CONST "__DATA_CONST"
 #endif
@@ -311,14 +307,15 @@ static void FlowRebindImage(const struct mach_header *header, intptr_t slide) {
     }
 }
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-void MSHookFunction(void *symbol, void *replace, void **result);
-void MSHookMessageEx(Class _class, SEL message, IMP hook, IMP *old);
-#ifdef __cplusplus
+typedef void (*FlowMSHookFunction_t)(void *symbol, void *replace, void **result);
+
+static void FlowHookSymbolIfPossible(void *sym, void *replace, void **origOut) {
+    if (!sym) return;
+    FlowMSHookFunction_t msHook = (FlowMSHookFunction_t)dlsym(RTLD_DEFAULT, "MSHookFunction");
+    if (msHook) {
+        msHook(sym, replace, origOut);
+    }
 }
-#endif
 
 static void FlowInstallSqliteAntiUnsendHook(void) {
     static dispatch_once_t onceToken;
@@ -326,7 +323,7 @@ static void FlowInstallSqliteAntiUnsendHook(void) {
         void *sym = dlsym(RTLD_DEFAULT, "sqlite3_prepare_v2");
         if (sym) {
             orig_sqlite3_prepare_v2 = (int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **))sym;
-            MSHookFunction(sym, (void *)&hook_sqlite3_prepare_v2, (void **)&orig_sqlite3_prepare_v2);
+            FlowHookSymbolIfPossible(sym, (void *)&hook_sqlite3_prepare_v2, (void **)&orig_sqlite3_prepare_v2);
         }
         _dyld_register_func_for_add_image(&FlowRebindImage);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -334,8 +331,8 @@ static void FlowInstallSqliteAntiUnsendHook(void) {
             dlopen([[fwDir stringByAppendingString:@"/LightSpeedEngine.framework/LightSpeedEngine"] UTF8String], RTLD_NOW);
             dlopen([[fwDir stringByAppendingString:@"/LightSpeedCore.framework/LightSpeedCore"] UTF8String], RTLD_NOW);
             void *lateSym = dlsym(RTLD_DEFAULT, "sqlite3_prepare_v2");
-            if (lateSym && orig_sqlite3_prepare_v2 == lateSym) {
-                MSHookFunction(lateSym, (void *)&hook_sqlite3_prepare_v2, (void **)&orig_sqlite3_prepare_v2);
+            if (lateSym && (void *)orig_sqlite3_prepare_v2 == lateSym) {
+                FlowHookSymbolIfPossible(lateSym, (void *)&hook_sqlite3_prepare_v2, (void **)&orig_sqlite3_prepare_v2);
             }
             uint32_t count = _dyld_image_count();
             for (uint32_t i = 0; i < count; i++) {
@@ -937,9 +934,10 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 %hook MSGThreadListDataSource
 
 - (NSArray *)inboxRows {
-    NSMutableArray *rows = [%orig mutableCopy];
+    NSArray *origRows = %orig;
+    NSMutableArray *rows = [origRows mutableCopy];
     NSIndexSet *indexesToRemove = [rows indexesOfObjectsPassingTest:^BOOL(id obj, NSUInteger idx, BOOL *stop) {
-        if ([obj isKindOfClass:%c(MSGInboxRowUnit)]) {
+        if ([obj isKindOfClass:objc_getClass("MSGInboxRowUnit")]) {
             NSString *unitKey = [[(MSGInboxRowUnit *)obj inboxUnit] key];
             if ([unitKey isEqualToString:@"ads_renderer"] && [[MsngrUserDefaults standardUserDefaults] boolForKey:@"noAds"]) {
                 return YES;
@@ -988,7 +986,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
     if ([[MsngrUserDefaults standardUserDefaults] boolForKey:@"noTypingIndicator"]) {
         if (class_getInstanceVariable([self class], "_sendButton") &&
             class_getInstanceVariable([self class], "_mainOtherActionButton")) {
-            UIView *sendButton = [self valueForKey:@"_sendButton"];
+            UIControl *sendButton = (UIControl *)[self valueForKey:@"_sendButton"];
             UIView *otherButton = [self valueForKey:@"_mainOtherActionButton"];
             BOOL hasText = textView.text.length > 0;
             [sendButton setHidden:!hasText];
@@ -1012,7 +1010,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 
 - (void)_didPressEmojiButton:(id)sender {
-    if ([self.parentViewController isKindOfClass:%c(MSGThreadViewController)] &&
+    if ([self.parentViewController isKindOfClass:objc_getClass("MSGThreadViewController")] &&
         [[MsngrUserDefaults standardUserDefaults] boolForKey:@"msgAnon"]) {
         showConfirmation(self, ^{
             %orig;
@@ -1023,7 +1021,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 }
 
 - (void)_didPressOtherActionButton {
-    if ([self.parentViewController isKindOfClass:%c(MSGThreadViewController)] &&
+    if ([self.parentViewController isKindOfClass:objc_getClass("MSGThreadViewController")] &&
         [[MsngrUserDefaults standardUserDefaults] boolForKey:@"msgAnon"]) {
         showConfirmation(self, ^{
             %orig;
@@ -1122,7 +1120,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
                                                           style:UIAlertActionStyleDefault
                                                         handler:^(UIAlertAction *action) {
                     UIViewController *vc = [[self _viewControllerForAncestor] parentViewController];
-                    if ([vc isKindOfClass:%c(LSStoryBucketViewController)]) {
+                    if ([vc isKindOfClass:objc_getClass("LSStoryBucketViewController")]) {
                         [(LSStoryBucketViewController *)vc didFullyDisplayBucket];
                         [(LSStoryBucketViewController *)vc startTimer];
                     }
@@ -1133,7 +1131,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
                                                           style:UIAlertActionStyleDefault
                                                         handler:^(UIAlertAction *action) {
                     UIViewController *vc = [[self _viewControllerForAncestor] parentViewController];
-                    if ([vc isKindOfClass:%c(LSStoryBucketViewController)]) {
+                    if ([vc isKindOfClass:objc_getClass("LSStoryBucketViewController")]) {
                         if (class_getInstanceVariable([vc class], "_currentThreadVC")) {
                             id threadVC = [vc valueForKey:@"_currentThreadVC"];
                             if (class_getInstanceVariable([threadVC class], "_mediaContentVC")) {
@@ -1193,7 +1191,8 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
 %hook UITabBar
 - (NSArray *)items {
     gActiveTabBar = self;
-    NSMutableArray *items = [%orig mutableCopy];
+    NSArray *origItems = %orig;
+    NSMutableArray *items = [origItems mutableCopy];
     NSIndexSet *indexesToRemove = [items indexesOfObjectsPassingTest:^BOOL(MDSTabBarItem *item, NSUInteger idx, BOOL *stop) {
         BOOL shouldHide = NO;
         if ([item respondsToSelector:@selector(props)]) {
