@@ -26,8 +26,8 @@ jobs:
 
       - name: Build All Packages and LiveContainer Dylib
         run: |
-          chmod +x ./build.sh
-          ./build.sh
+          chmod +x ./build_dylib.sh
+          ./build_dylib.sh
 
       - name: Verify Build Outputs
         run: |
@@ -48,4 +48,5 @@ jobs:
             dist/com.dvntm.flow_1.0.3_iphoneos-arm64e.deb
             Tweak.xm
             Makefile
-            build.sh
+            build_dylib.sh
+            RULE.md
