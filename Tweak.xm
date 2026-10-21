@@ -1301,7 +1301,7 @@ static void showHUDToast(NSString *text, NSString *systemImageName) {
         gAntiUnsend = [[MsngrUserDefaults standardUserDefaults] boolForKey:@"antiUnsend"];
         FlowInstallSqliteAntiUnsendHook();
 
-        NSDictionary *entitlements = [[LSApplicationProxy bundleProxyForCurrentProcess] entitlements];
+        NSDictionary *entitlements = [(LSApplicationProxy *)[objc_getClass("LSApplicationProxy") bundleProxyForCurrentProcess] entitlements];
         BOOL isOfficialSigning = [entitlements[@"application-identifier"] isEqualToString:@"T84QZS65DQ.com.facebook.Messenger"];
         BOOL isOfficialBundleID = [[[NSBundle mainBundle] infoDictionary][@"CFBundleIdentifier"] isEqualToString:@"com.facebook.Messenger"];
 
