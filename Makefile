@@ -1,20 +1,21 @@
 TARGET := iphone:clang:latest:14.0
-ARCHS = arm64
+INSTALL_TARGET_PROCESSES = Messenger
+ARCHS ?= arm64 arm64e
 
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Flow
 
 Flow_FILES = Tweak.xm
-Flow_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
-Flow_LDFLAGS = -Wl,-install_name,@rpath/Flow.dylib
-Flow_FRAMEWORKS = UIKit Foundation CoreFoundation CoreGraphics QuartzCore Security
+Flow_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-parameter
+Flow_CCFLAGS = -std=c++17 -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-parameter
+Flow_FRAMEWORKS = UIKit Foundation CoreFoundation CoreGraphics Security QuartzCore
 Flow_LIBRARIES = sqlite3
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-after-Flow-stage::
-	install_name_tool -id "@rpath/Flow.dylib" "$(THEOS_OBJ_DIR)/Flow.dylib" 2>/dev/null || true
-	install_name_tool -change "/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate" "@rpath/CydiaSubstrate.framework/CydiaSubstrate" "$(THEOS_OBJ_DIR)/Flow.dylib" 2>/dev/null || true
-	install_name_tool -change "/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate" "@rpath/CydiaSubstrate.framework/CydiaSubstrate" "$(THEOS_OBJ_DIR)/Flow.dylib" 2>/dev/null || true
-	install_name_tool -change "@loader_path/.jbroot/usr/lib/libsubstrate.dylib" "@rpath/CydiaSubstrate.framework/CydiaSubstrate" "$(THEOS_OBJ_DIR)/Flow.dylib" 2>/dev/null || true
+livecontainer:
+	@mkdir -p build_livecontainer
+	$(MAKE) clean
+	$(MAKE) THEOS_PACKAGE_SCHEME= ARCHS="arm64" FINALPACKAGE=1
+	cp $(THEOS_OBJ_DIR)/Flow.dylib build_livecontainer/Flow.dylib

@@ -1,23 +1,51 @@
-name: Build Flow LiveContainer Dylib
+name: Build Flow Tweak
 
 on:
-  push:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Theos
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Build Dependencies
         run: |
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
-      - name: Build Flow.dylib for LiveContainer
+          if ! command -v dpkg-deb >/dev/null 2>&1; then
+            brew install dpkg
+          fi
+          if ! command -v ldid >/dev/null 2>&1; then
+            brew install ldid
+          fi
+
+      - name: Build All Packages and LiveContainer Dylib
         run: |
-          export THEOS=$HOME/theos
-          bash ./build.sh
-      - name: Upload Flow.dylib
+          chmod +x ./build.sh
+          ./build.sh
+
+      - name: Verify Build Outputs
+        run: |
+          test -f dist/Flow_1.0.3.dylib
+          test -f dist/com.dvntm.flow_1.0.3_iphoneos-arm.deb
+          test -f dist/com.dvntm.flow_1.0.3_iphoneos-arm64.deb
+          test -f dist/com.dvntm.flow_1.0.3_iphoneos-arm64e.deb
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flow.dylib
-          path: dist/Flow.dylib
+          name: Flow_v1.0.3_Build_Outputs
+          path: |
+            dist/Flow_1.0.3.dylib
+            dist/Flow.dylib
+            dist/com.dvntm.flow_1.0.3_iphoneos-arm.deb
+            dist/com.dvntm.flow_1.0.3_iphoneos-arm64.deb
+            dist/com.dvntm.flow_1.0.3_iphoneos-arm64e.deb
+            Tweak.xm
+            Makefile
+            build.sh

@@ -1,0 +1,9 @@
+Package: com.dvntm.flow
+Name: Flow for Messenger
+Version: 1.0.3
+Architecture: iphoneos-arm
+Description: Flow for Messenger with Anti-Unsend Messages, Stealth Mode, Story Controls, and crash logging.
+Maintainer: dvntm
+Author: dvntm
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)

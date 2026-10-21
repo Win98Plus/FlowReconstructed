@@ -311,19 +311,37 @@ static void FlowRebindImage(const struct mach_header *header, intptr_t slide) {
     }
 }
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+void MSHookFunction(void *symbol, void *replace, void **result);
+void MSHookMessageEx(Class _class, SEL message, IMP hook, IMP *old);
+#ifdef __cplusplus
+}
+#endif
+
 static void FlowInstallSqliteAntiUnsendHook(void) {
-    if (!orig_sqlite3_prepare_v2) {
-        orig_sqlite3_prepare_v2 = (int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **))dlsym(RTLD_DEFAULT, "sqlite3_prepare_v2");
-    }
-    _dyld_register_func_for_add_image(&FlowRebindImage);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSString *fwDir = [[[NSBundle mainBundle] bundlePath] stringByAppendingString:@"/Frameworks"];
-        dlopen([[fwDir stringByAppendingString:@"/LightSpeedEngine.framework/LightSpeedEngine"] UTF8String], RTLD_NOW);
-        dlopen([[fwDir stringByAppendingString:@"/LightSpeedCore.framework/LightSpeedCore"] UTF8String], RTLD_NOW);
-        uint32_t count = _dyld_image_count();
-        for (uint32_t i = 0; i < count; i++) {
-            FlowRebindImage(_dyld_get_image_header(i), _dyld_get_image_vmaddr_slide(i));
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        void *sym = dlsym(RTLD_DEFAULT, "sqlite3_prepare_v2");
+        if (sym) {
+            orig_sqlite3_prepare_v2 = (int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **))sym;
+            MSHookFunction(sym, (void *)&hook_sqlite3_prepare_v2, (void **)&orig_sqlite3_prepare_v2);
         }
+        _dyld_register_func_for_add_image(&FlowRebindImage);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            NSString *fwDir = [[[NSBundle mainBundle] bundlePath] stringByAppendingString:@"/Frameworks"];
+            dlopen([[fwDir stringByAppendingString:@"/LightSpeedEngine.framework/LightSpeedEngine"] UTF8String], RTLD_NOW);
+            dlopen([[fwDir stringByAppendingString:@"/LightSpeedCore.framework/LightSpeedCore"] UTF8String], RTLD_NOW);
+            void *lateSym = dlsym(RTLD_DEFAULT, "sqlite3_prepare_v2");
+            if (lateSym && orig_sqlite3_prepare_v2 == lateSym) {
+                MSHookFunction(lateSym, (void *)&hook_sqlite3_prepare_v2, (void **)&orig_sqlite3_prepare_v2);
+            }
+            uint32_t count = _dyld_image_count();
+            for (uint32_t i = 0; i < count; i++) {
+                FlowRebindImage(_dyld_get_image_header(i), _dyld_get_image_vmaddr_slide(i));
+            }
+        });
     });
 }
 
@@ -589,7 +607,7 @@ static inline UIImage *FlowBundleOrSystemImage(NSString *bundleImageName, NSStri
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == [_sections indexOfObject:_nwsr]) {
         NSString *appVersion = [[NSBundle mainBundle] infoDictionary][@"CFBundleShortVersionString"];
-        return [NSString stringWithFormat:@"%@\n\nFlow: %@ - Messenger: %@", LOC(@"DeveloperFooter"), @"1.0.2", appVersion];
+        return [NSString stringWithFormat:@"%@\n\nFlow: %@ - Messenger: %@", LOC(@"DeveloperFooter"), @"1.0.3", appVersion];
     }
     return nil;
 }
